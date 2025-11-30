@@ -1,6 +1,7 @@
 # capture_letter.py
 import cv2, os, time, csv, argparse
 import mediapipe as mp
+import numpy as np
 from pathlib import Path
 
 # ---------------------------
@@ -50,6 +51,15 @@ def append_row(csv_path, row):
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(row)
+        
+def normalize_landmarks(lm_list):
+    coords = np.array([[lm.x, lm.y, lm.z] for lm in lm_list])
+    wrist = coords[0]
+    coords -= wrist
+    max_val = np.max(np.abs(coords))
+    if max_val > 0:
+        coords /= max_val
+    return coords.flatten()
 
 def main():
     parser = argparse.ArgumentParser()
@@ -124,14 +134,11 @@ def main():
 
                 if res.hand_landmarks and len(res.hand_landmarks) > 0:
                     lm = res.hand_landmarks[0]
-                    row = []
-                    for p in lm:
-                        row += [p.x, p.y, p.z]
+                    row = normalize_landmarks(lm)  # <--- Normalizado
+                    row = row.tolist()
                     row.append(letter)
                 else:
-                    # sin detección: rellenar con ceros o vacíos
                     row = [0.0 for _ in range(21*3)] + [letter]
-
                 append_row(csv_path, row)
                 print(f"✔ {fname.name}  (landmarks: {len(res.hand_landmarks) if 'res' in locals() else 0})")
                 # pequeña pausa para variación natural

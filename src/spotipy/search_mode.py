@@ -57,20 +57,49 @@ def normalize_landmarks(lm_list):
 def spotify_play_from_word(word):
     try:
         sp = get_spotify_client()
-        results = sp.search(q=word, type="track", limit=1)
+
+        # Buscar más resultados para tener variedad
+        results = sp.search(q=word, type="track", limit=10)
         items = results["tracks"]["items"]
 
         if not items:
-            print("❌ No se encontró nada en Spotify para:", word)
+            print("No se encontró nada en Spotify para:", word)
             return
 
-        track = items[0]
-        uri = track["uri"]
-        print(f"🎵 Reproduciendo: {track['name']} - {track['artists'][0]['name']}")
-        sp.start_playback(uris=[uri])
+        # Función simple de similitud: proporción de coincidencia
+        def similarity(a, b):
+            a = a.lower()
+            b = b.lower()
+            matches = sum(1 for x, y in zip(a, b) if x == y)
+            return matches / max(len(a), len(b))
+
+        best_track = None
+        best_score = -1
+        target = word.lower()
+
+        for track in items:
+            name = track["name"].lower()
+
+            # Coincidencia exacta → escoger inmediatamente
+            if name == target:
+                best_track = track
+                break
+
+            # Coincidencia aproximada → medir similitud
+            score = similarity(target, name)
+
+            if score > best_score:
+                best_score = score
+                best_track = track
+
+        if best_track:
+            print(f"Reproduciendo: {best_track['name']} - {best_track['artists'][0]['name']}")
+            sp.start_playback(uris=[best_track["uri"]])
+        else:
+            print("No se pudo determinar la mejor coincidencia.")
 
     except Exception as e:
-        print("⚠️ Error al reproducir en Spotify:", e)
+        print("Error al reproducir en Spotify:", e)
 
 # ---------------------------
 # Variables de búsqueda
@@ -79,7 +108,11 @@ search_mode = False
 search_buffer = ""
 last_letter = None
 letter_start_time = None
-HOLD_TIME = 1.3
+HOLD_TIME = 2.0
+
+SEARCH_HOLD_TIME = 2.0
+search_start_time = None
+search_detected_once = False
 
 print("Presiona ESC para salir.")
 
@@ -103,22 +136,34 @@ while True:
         prediction = clf.predict(vec)[0]
 
     # ===============================
-    # DETECTAR SEARCH GESTURE
+    # DETECTAR SEARCH GESTURE CON HOLD
     # ===============================
     if prediction == "SEARCH":
-        if not search_mode:
-            search_mode = True
-            search_buffer = ""
-            print("🔍 MODO BÚSQUEDA ACTIVADO")
-            time.sleep(1)
+
+        if search_start_time is None:
+            search_start_time = time.time()
 
         else:
-            print(f"✅ PALABRA FINAL: {search_buffer}")
-            print("🎧 Enviando a Spotify...")
-            spotify_play_from_word(search_buffer)
+            if time.time() - search_start_time >= SEARCH_HOLD_TIME:
 
-            search_mode = False
-            time.sleep(1)
+                if not search_mode:  
+                    search_mode = True
+                    search_buffer = ""
+                    print("MODO BÚSQUEDA ACTIVADO")
+                    search_detected_once = True
+                    time.sleep(1)
+
+                else:
+                    if not search_detected_once:
+                        print(f"PALABRA FINAL: {search_buffer}")
+                        print("Enviando a Spotify...")
+                        spotify_play_from_word(search_buffer)
+                        search_mode = False
+                        time.sleep(1)
+                    search_detected_once = False
+
+    else:
+        search_start_time = None
 
     # ===============================
     # LETRAS EN MODO BÚSQUEDA

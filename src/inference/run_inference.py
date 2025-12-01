@@ -6,7 +6,7 @@ import numpy as np
 from pathlib import Path
 
 # ---------------------------
-# CONFIG
+# CONFIG RUTA ABSOLUTA!!!!!!
 # ---------------------------
 MODEL_PATH = r"C:\Users\Matías\Desktop\Proyecto AC\src\data_collection\hand_landmarker\float16\hand_landmarker.task"
 TRAINED_MODEL_PATH = r"C:\Users\Matías\Desktop\Proyecto AC\src\training\trained_model.pkl"

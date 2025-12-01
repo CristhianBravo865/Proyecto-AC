@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 
 # ---------------------------
-# CONFIG (edita si hace falta)
+# CONFIG RUTA ABSOLUTA!!!!!!
 # ---------------------------
 MODEL_PATH = r"C:\Users\Matías\Desktop\Proyecto AC\src\data_collection\hand_landmarker\float16\hand_landmarker.task"
 # ---------------------------

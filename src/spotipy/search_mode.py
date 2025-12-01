@@ -4,8 +4,9 @@ import mediapipe as mp
 import pickle
 import numpy as np
 import time
+from spotify_auth import get_spotify_client
 
-#RUTAS ABSOLUTAS!!!!!!!!!!
+# RUTAS ABSOLUTAS !!!!!!!
 MODEL_PATH = r"C:\Users\Matías\Desktop\Proyecto AC\src\data_collection\hand_landmarker\float16\hand_landmarker.task"
 TRAINED_MODEL_PATH = r"C:\Users\Matías\Desktop\Proyecto AC\src\training\trained_model.pkl"
 
@@ -43,15 +44,33 @@ def mp_image_from_frame(frame):
 
 def normalize_landmarks(lm_list):
     coords = np.array([[lm.x, lm.y, lm.z] for lm in lm_list])
-
     wrist = coords[0]
     coords -= wrist
-
     max_val = np.max(np.abs(coords))
     if max_val > 0:
         coords /= max_val
-
     return coords.flatten()
+
+# ---------------------------
+# Spotify Search & Play
+# ---------------------------
+def spotify_play_from_word(word):
+    try:
+        sp = get_spotify_client()
+        results = sp.search(q=word, type="track", limit=1)
+        items = results["tracks"]["items"]
+
+        if not items:
+            print("❌ No se encontró nada en Spotify para:", word)
+            return
+
+        track = items[0]
+        uri = track["uri"]
+        print(f"🎵 Reproduciendo: {track['name']} - {track['artists'][0]['name']}")
+        sp.start_playback(uris=[uri])
+
+    except Exception as e:
+        print("⚠️ Error al reproducir en Spotify:", e)
 
 # ---------------------------
 # Variables de búsqueda
@@ -66,6 +85,9 @@ print("Presiona ESC para salir.")
 
 cap = cv2.VideoCapture(0)
 
+# ===============================
+# MAIN LOOP
+# ===============================
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -81,7 +103,7 @@ while True:
         prediction = clf.predict(vec)[0]
 
     # ===============================
-    #        DETECTAR SEARCH
+    # DETECTAR SEARCH GESTURE
     # ===============================
     if prediction == "SEARCH":
         if not search_mode:
@@ -89,13 +111,17 @@ while True:
             search_buffer = ""
             print("🔍 MODO BÚSQUEDA ACTIVADO")
             time.sleep(1)
+
         else:
             print(f"✅ PALABRA FINAL: {search_buffer}")
+            print("🎧 Enviando a Spotify...")
+            spotify_play_from_word(search_buffer)
+
             search_mode = False
             time.sleep(1)
 
     # ===============================
-    #      CAPTURA DE LETRAS
+    # LETRAS EN MODO BÚSQUEDA
     # ===============================
     if search_mode and prediction not in ["SEARCH", "-"]:
         if prediction != last_letter:

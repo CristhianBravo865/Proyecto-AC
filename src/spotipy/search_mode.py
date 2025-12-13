@@ -88,7 +88,7 @@ def detect_motion_gesture(buffer):
     return None
 
 # ===============================
-# SEARCH CONFIRM
+# SEARCH CONFIRM (HOLD)
 # ===============================
 SEARCH_HOLD_TIME = 2.0
 search_hold_start = None
@@ -124,12 +124,11 @@ def find_user_playlist(name):
             return p
     return None
 
-# 🔥 FUNCIÓN CORREGIDA: SIN LÍMITE DE 100
 def find_track_in_playlist(playlist_uri, track_name):
     sp = get_spotify_client()
     playlist_id = playlist_uri.split(":")[-1]
-    track_name = track_name.lower()
 
+    track_name = track_name.lower()
     offset = 0
     limit = 100
 
@@ -144,7 +143,6 @@ def find_track_in_playlist(playlist_uri, track_name):
         for item in results["items"]:
             track = item.get("track")
             if track and track_name in track["name"].lower():
-                print("🎯 Canción encontrada:", track["name"])
                 return track
 
         if results["next"] is None:
@@ -287,7 +285,7 @@ while True:
                         track["uri"]
                     )
                 else:
-                    print("❌ No se encontró la canción en la playlist")
+                    print("No se encontró la canción en la playlist")
 
             selected_playlist = None
             buffer_text = ""
@@ -304,6 +302,17 @@ while True:
                 buffer_text += prediction
                 last_letter = None
                 letter_start_time = None
+
+    cv2.putText(frame, f"State: {state}", (10, 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    cv2.putText(frame, f"Prediction: {prediction}", (10, 80),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(frame, f"Buffer: {buffer_text}", (10, 120),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+    if selected_playlist:
+        cv2.putText(frame, f"Playlist: {selected_playlist['name']}", (10, 160),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
 
     cv2.imshow("Hand Spotify Control", frame)
 

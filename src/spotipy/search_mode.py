@@ -7,14 +7,13 @@ from spotify_auth import get_spotify_client
 from collections import deque
 
 # ===============================
-# CONFIG GESTOS DINÁMICOS
+# CONFIG GESTOS ESTÁTICOS
 # ===============================
-motion_buffer = deque(maxlen=12)
-last_gesture_time = 0
 GESTURE_COOLDOWN = 1.2
-
-MIN_SWIPE_DIST = 0.14
-DIRECTION_RATIO = 2.0
+HOLD_TIME = 1.5  # tiempo que debe mantenerse el gesto
+last_gesture_time = 0
+last_gesture = None
+gesture_start_time = None
 
 # ===============================
 # ESTADOS
@@ -72,20 +71,53 @@ def normalize_landmarks(lm_list):
         coords /= max_val
     return coords.flatten()
 
-def detect_motion_gesture(buffer):
-    start, end = buffer[0], buffer[-1]
-    dx, dy = end[0] - start[0], end[1] - start[1]
-
-    if max(abs(dx), abs(dy)) < MIN_SWIPE_DIST:
-        return None
-
-    if abs(dx) > abs(dy) * DIRECTION_RATIO:
-        return "NEXT" if dx > 0 else "PREV"
-
-    if abs(dy) > abs(dx) * DIRECTION_RATIO:
-        return "PLAY" if dy < 0 else "PAUSE"
-
+# ===============================
+# GESTOS ESTÁTICOS
+# ===============================
+def detect_static_gesture(prediction):
+    if prediction == "APUNTAR_DERECHA":
+        return "NEXT"
+    elif prediction == "APUNTAR_IZQUIERDA":
+        return "PREV"
+    elif prediction == "PAUSA_PLAY":
+        return "PLAY/PAUSE"
+    elif prediction == "APUNTAR_ARRIBA":
+        return "VOLUME_UP"
+    elif prediction == "APUNTAR_ABAJO":
+        return "VOLUME_DOWN"
     return None
+
+# ===============================
+# SPOTIFY FUNCIONES
+# ===============================
+def get_current_volume(sp):
+    playback = sp.current_playback()
+    if playback and "device" in playback and "volume_percent" in playback["device"]:
+        return playback["device"]["volume_percent"]
+    return 50
+
+sp = get_spotify_client()
+current_volume = get_current_volume(sp)
+
+def control_spotify(gesture):
+    global current_volume
+    sp = get_spotify_client()
+    if gesture == "NEXT":
+        sp.next_track()
+    elif gesture == "PREV":
+        sp.previous_track()
+    elif gesture == "PLAY/PAUSE":
+        sp_playback = sp.current_playback()
+        if sp_playback and sp_playback["is_playing"]:
+            sp.pause_playback()
+        else:
+            sp.start_playback()
+    elif gesture == "VOLUME_UP":
+        current_volume = min(current_volume + 10, 100)
+        sp.volume(current_volume)
+    elif gesture == "VOLUME_DOWN":
+        current_volume = max(current_volume - 10, 0)
+        sp.volume(current_volume)
 
 # ===============================
 # SEARCH CONFIRM (HOLD)
@@ -106,7 +138,7 @@ def search_confirmed(prediction):
     return False
 
 # ===============================
-# SPOTIFY FUNCIONES
+# SPOTIFY BÚSQUEDA
 # ===============================
 def search_global_track(query):
     sp = get_spotify_client()
@@ -118,7 +150,6 @@ def find_user_playlist(name):
     sp = get_spotify_client()
     playlists = sp.current_user_playlists(limit=50)["items"]
     name = name.lower()
-
     for p in playlists:
         if name in p["name"].lower():
             return p
@@ -127,38 +158,24 @@ def find_user_playlist(name):
 def find_track_in_playlist(playlist_uri, track_name):
     sp = get_spotify_client()
     playlist_id = playlist_uri.split(":")[-1]
-
     track_name = track_name.lower()
     offset = 0
     limit = 100
-
     while True:
-        results = sp.playlist_items(
-            playlist_id,
-            offset=offset,
-            limit=limit,
-            additional_types=["track"]
-        )
-
+        results = sp.playlist_items(playlist_id, offset=offset, limit=limit, additional_types=["track"])
         for item in results["items"]:
             track = item.get("track")
             if track and track_name in track["name"].lower():
                 return track
-
         if results["next"] is None:
             break
-
         offset += limit
-
     return None
 
 def play_playlist_from_track(playlist_uri, track_uri):
     sp = get_spotify_client()
     try:
-        sp.start_playback(
-            context_uri=playlist_uri,
-            offset={"uri": track_uri}
-        )
+        sp.start_playback(context_uri=playlist_uri, offset={"uri": track_uri})
     except Exception:
         sp.start_playback(uris=[track_uri])
 
@@ -169,7 +186,6 @@ buffer_text = ""
 last_letter = None
 letter_start_time = None
 HOLD_TIME = 2.0
-
 selected_playlist = None
 
 print("Presiona ESC para salir")
@@ -194,7 +210,27 @@ while True:
         vec = normalize_landmarks(lm).reshape(1, -1)
         prediction = clf.predict(vec)[0]
 
+    # ===============================
+    # ESTADO PRINCIPAL (GESTOS ESTÁTICOS)
+    # ===============================
     if state == STATE_MAIN:
+        gesture = detect_static_gesture(prediction)
+
+        if gesture:
+            if last_gesture != gesture:
+                last_gesture = gesture
+                gesture_start_time = time.time()
+            elif time.time() - gesture_start_time >= HOLD_TIME:
+                if time.time() - last_gesture_time >= GESTURE_COOLDOWN:
+                    control_spotify(gesture)
+                    last_gesture_time = time.time()
+                    gesture_start_time = None
+                    last_gesture = None
+        else:
+            last_gesture = None
+            gesture_start_time = None
+
+        # Mantener la búsqueda intacta
         if search_confirmed(prediction):
             state = STATE_SEARCH_MODE_SELECT
             buffer_text = ""
@@ -202,24 +238,9 @@ while True:
             print("MODO BUSQUEDA -> P (Playlist) / B (Global)")
             time.sleep(1)
 
-        if lm is not None:
-            center = np.mean([[p.x, p.y, p.z] for p in lm], axis=0)
-            motion_buffer.append(center)
-
-            if len(motion_buffer) == motion_buffer.maxlen:
-                if time.time() - last_gesture_time > GESTURE_COOLDOWN:
-                    g = detect_motion_gesture(motion_buffer)
-                    if g:
-                        sp = get_spotify_client()
-                        if g == "NEXT": sp.next_track()
-                        elif g == "PREV": sp.previous_track()
-                        elif g == "PLAY": sp.start_playback()
-                        elif g == "PAUSE": sp.pause_playback()
-                        last_gesture_time = time.time()
-                        motion_buffer.clear()
-        else:
-            motion_buffer.clear()
-
+    # ===============================
+    # ESTADOS DE BÚSQUEDA (igual que tu script original)
+    # ===============================
     elif state == STATE_SEARCH_MODE_SELECT:
         if prediction in ["P", "B"]:
             if prediction != last_letter:
@@ -238,7 +259,6 @@ while True:
             if track:
                 get_spotify_client().start_playback(uris=[track["uri"]])
             state = STATE_MAIN
-
         elif prediction not in ["-", "SEARCH"]:
             if prediction != last_letter:
                 last_letter = prediction
@@ -257,12 +277,10 @@ while True:
                 state = STATE_SEARCH_TRACK_IN_PLAYLIST
             else:
                 state = STATE_MAIN
-
             buffer_text = ""
             last_letter = None
             letter_start_time = None
             time.sleep(1)
-
         elif prediction not in ["-", "SEARCH"]:
             if prediction != last_letter:
                 last_letter = prediction
@@ -275,25 +293,17 @@ while True:
     elif state == STATE_SEARCH_TRACK_IN_PLAYLIST:
         if search_confirmed(prediction):
             if selected_playlist:
-                track = find_track_in_playlist(
-                    selected_playlist["uri"],
-                    buffer_text
-                )
+                track = find_track_in_playlist(selected_playlist["uri"], buffer_text)
                 if track:
-                    play_playlist_from_track(
-                        selected_playlist["uri"],
-                        track["uri"]
-                    )
+                    play_playlist_from_track(selected_playlist["uri"], track["uri"])
                 else:
                     print("No se encontró la canción en la playlist")
-
             selected_playlist = None
             buffer_text = ""
             last_letter = None
             letter_start_time = None
             state = STATE_MAIN
             time.sleep(1)
-
         elif prediction not in ["-", "SEARCH"]:
             if prediction != last_letter:
                 last_letter = prediction
@@ -303,16 +313,14 @@ while True:
                 last_letter = None
                 letter_start_time = None
 
-    cv2.putText(frame, f"State: {state}", (10, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    cv2.putText(frame, f"Prediction: {prediction}", (10, 80),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    cv2.putText(frame, f"Buffer: {buffer_text}", (10, 120),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-
+    # ===============================
+    # UI
+    # ===============================
+    cv2.putText(frame, f"State: {state}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    cv2.putText(frame, f"Prediction: {prediction}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(frame, f"Buffer: {buffer_text}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     if selected_playlist:
-        cv2.putText(frame, f"Playlist: {selected_playlist['name']}", (10, 160),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+        cv2.putText(frame, f"Playlist: {selected_playlist['name']}", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
 
     cv2.imshow("Hand Spotify Control", frame)
 

@@ -3,6 +3,10 @@ import mediapipe as mp
 import pickle
 import numpy as np
 import time
+import pyttsx3 
+import threading
+import queue
+
 from spotify_auth import get_spotify_client
 
 # ===============================
@@ -186,6 +190,39 @@ last_letter = None
 letter_start_time = None
 selected_playlist = None
 
+# ===============================
+# VOZ NO BLOQUEANTE
+# ===============================
+voice_queue = queue.Queue()
+
+def voice_worker():
+    while True:
+        text = voice_queue.get()
+        if text is None:
+            break
+        
+        try:
+            # Inicializamos el motor DENTRO del bucle para cada frase
+            engine = pyttsx3.init()
+            engine.setProperty('rate', 125) # Un poco más rápido para que no se acumulen
+            engine.setProperty('volume', 1)
+            
+            engine.say(text)
+            engine.runAndWait()
+            
+            # Forzamos la parada y eliminación del objeto para liberar el COM
+            engine.stop()
+            del engine 
+        except Exception as e:
+            print(f"Error en el motor de voz: {e}")
+
+
+voice_thread = threading.Thread(target=voice_worker, daemon=True)
+voice_thread.start()
+
+def speak(text):
+    voice_queue.put(text)
+
 print("Presiona ESC para salir")
 cap = cv2.VideoCapture(0)
 
@@ -197,15 +234,18 @@ def handle_backspace():
     if buffer_text:
         buffer_text = buffer_text[:-1]
         print(" Letra eliminada. Buffer:", buffer_text)
+        speak("Letra eliminada. Buffer actualizado.")
     else:
         # Volver al estado anterior
         if state == STATE_SEARCH_PLAYLIST_NAME or state == STATE_SEARCH_GLOBAL:
             state = STATE_SEARCH_MODE_SELECT
             print("↩ Volviendo a selección de modo búsqueda")
+            speak("Volviendo a selección de modo búsqueda.")
         elif state == STATE_SEARCH_TRACK_IN_PLAYLIST:
             state = STATE_SEARCH_PLAYLIST_NAME
             selected_playlist = None
             print("↩ Volviendo a búsqueda de playlist")
+            speak("Volviendo a búsqueda de playlist.")
 
 # ===============================
 # MAIN LOOP
@@ -247,6 +287,7 @@ while True:
             state = STATE_SEARCH_MODE_SELECT
             buffer_text = ""
             last_letter = None
+            speak("Modo búsqueda activado. Elige P para Playlist o B para búsqueda global.")
             print("MODO BÚSQUEDA -> P (Playlist) / B (Global)")
             time.sleep(1)
 
@@ -261,18 +302,20 @@ while True:
             elif time.time() - letter_start_time >= HOLD_TIME:
                 if prediction == "P":
                     state = STATE_SEARCH_PLAYLIST_NAME
+                    speak("Modo búsqueda: Playlist. Escribe el nombre de la playlist.")
                     print("Modo búsqueda: Playlist")
                 elif prediction == "B":
                     state = STATE_SEARCH_GLOBAL
+                    speak("Modo búsqueda: Global. Escribe el nombre de la canción.")
                     print("Modo búsqueda: Global")
                 elif prediction == "APUNTAR_IZQUIERDA":
                     state = STATE_MAIN
+                    speak("Volviendo al estado principal.")
                     print("↩ Volviendo al estado principal")
                 buffer_text = ""
                 last_letter = None
                 letter_start_time = None
                 time.sleep(0.5)
-
 
     elif state == STATE_SEARCH_GLOBAL:
         if prediction not in ["-", "SEARCH"]:
@@ -290,6 +333,7 @@ while True:
                     letter_start_time = time.time()
                 elif time.time() - letter_start_time >= HOLD_TIME:
                     buffer_text += prediction
+                    speak(f"Letra guardada: {prediction}")
                     last_letter = None
                     letter_start_time = None
 
@@ -312,8 +356,10 @@ while True:
             if best_match and max_matches > 0:
                 print(f"🎵 Reproduciendo: {best_match['name']} - {best_match['artists'][0]['name']}")
                 sp.start_playback(uris=[best_match["uri"]])
+                speak(f"Reproduciendo: {best_match['name']} de {best_match['artists'][0]['name']}")
             else:
                 print("No se encontró ninguna canción relevante.")
+                speak("No se encontró ninguna canción relevante.")
 
             state = STATE_MAIN
             buffer_text = ""
@@ -336,6 +382,7 @@ while True:
                     letter_start_time = time.time()
                 elif time.time() - letter_start_time >= HOLD_TIME:
                     buffer_text += prediction
+                    speak(f"Letra guardada: {prediction}")
                     last_letter = None
                     letter_start_time = None
 
@@ -343,9 +390,11 @@ while True:
             playlist = find_user_playlist(buffer_text)
             if playlist:
                 selected_playlist = playlist
-                print("Playlist:", playlist["name"])
+                speak(f"Playlist encontrada: {playlist['name']}")
+                print(f"Playlist: {playlist['name']}")
                 state = STATE_SEARCH_TRACK_IN_PLAYLIST
             else:
+                speak("No se encontró la playlist.")
                 state = STATE_MAIN
             buffer_text = ""
             last_letter = None
@@ -368,6 +417,7 @@ while True:
                     letter_start_time = time.time()
                 elif time.time() - letter_start_time >= HOLD_TIME:
                     buffer_text += prediction
+                    speak(f"Letra guardada: {prediction}")
                     last_letter = None
                     letter_start_time = None
 
@@ -376,8 +426,9 @@ while True:
                 track = find_track_in_playlist(selected_playlist["uri"], buffer_text)
                 if track:
                     play_playlist_from_track(selected_playlist["uri"], track["uri"])
+                    speak(f"Reproduciendo {track['name']} de {track['artists'][0]['name']}")
                 else:
-                    print("No se encontró la canción en la playlist")
+                    speak("No se encontró la canción en la playlist.")
             selected_playlist = None
             buffer_text = ""
             last_letter = None
@@ -401,3 +452,5 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
+voice_queue.put(None)
+

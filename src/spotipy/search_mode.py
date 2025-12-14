@@ -4,7 +4,6 @@ import pickle
 import numpy as np
 import time
 from spotify_auth import get_spotify_client
-from collections import deque
 
 # ===============================
 # CONFIG GESTOS ESTÁTICOS
@@ -185,11 +184,28 @@ def play_playlist_from_track(playlist_uri, track_uri):
 buffer_text = ""
 last_letter = None
 letter_start_time = None
-HOLD_TIME = 2.0
 selected_playlist = None
 
 print("Presiona ESC para salir")
 cap = cv2.VideoCapture(0)
+
+# ===============================
+# BACKSPACE GESTUAL
+# ===============================
+def handle_backspace():
+    global buffer_text, state, selected_playlist
+    if buffer_text:
+        buffer_text = buffer_text[:-1]
+        print(" Letra eliminada. Buffer:", buffer_text)
+    else:
+        # Volver al estado anterior
+        if state == STATE_SEARCH_PLAYLIST_NAME or state == STATE_SEARCH_GLOBAL:
+            state = STATE_SEARCH_MODE_SELECT
+            print("↩ Volviendo a selección de modo búsqueda")
+        elif state == STATE_SEARCH_TRACK_IN_PLAYLIST:
+            state = STATE_SEARCH_PLAYLIST_NAME
+            selected_playlist = None
+            print("↩ Volviendo a búsqueda de playlist")
 
 # ===============================
 # MAIN LOOP
@@ -203,11 +219,8 @@ while True:
     res = detector.detect(mp_img)
 
     prediction = "-"
-    lm = None
-
     if res.hand_landmarks:
-        lm = res.hand_landmarks[0]
-        vec = normalize_landmarks(lm).reshape(1, -1)
+        vec = normalize_landmarks(res.hand_landmarks[0]).reshape(1, -1)
         prediction = clf.predict(vec)[0]
 
     # ===============================
@@ -230,41 +243,56 @@ while True:
             last_gesture = None
             gesture_start_time = None
 
-        # Mantener la búsqueda intacta
         if search_confirmed(prediction):
             state = STATE_SEARCH_MODE_SELECT
             buffer_text = ""
             last_letter = None
-            print("MODO BUSQUEDA -> P (Playlist) / B (Global)")
+            print("MODO BÚSQUEDA -> P (Playlist) / B (Global)")
             time.sleep(1)
 
     # ===============================
-    # ESTADOS DE BÚSQUEDA (igual que tu script original)
+    # ESTADOS DE BÚSQUEDA
     # ===============================
     elif state == STATE_SEARCH_MODE_SELECT:
-        if prediction in ["P", "B"]:
+        if prediction in ["P", "B", "APUNTAR_IZQUIERDA"]:
             if prediction != last_letter:
                 last_letter = prediction
                 letter_start_time = time.time()
             elif time.time() - letter_start_time >= HOLD_TIME:
-                state = STATE_SEARCH_PLAYLIST_NAME if prediction == "P" else STATE_SEARCH_GLOBAL
+                if prediction == "P":
+                    state = STATE_SEARCH_PLAYLIST_NAME
+                    print("Modo búsqueda: Playlist")
+                elif prediction == "B":
+                    state = STATE_SEARCH_GLOBAL
+                    print("Modo búsqueda: Global")
+                elif prediction == "APUNTAR_IZQUIERDA":
+                    state = STATE_MAIN
+                    print("↩ Volviendo al estado principal")
                 buffer_text = ""
                 last_letter = None
                 letter_start_time = None
-                time.sleep(1)
+                time.sleep(0.5)
+
 
     elif state == STATE_SEARCH_GLOBAL:
-        # Añadir letras al buffer
         if prediction not in ["-", "SEARCH"]:
-            if prediction != last_letter:
-                last_letter = prediction
-                letter_start_time = time.time()
-            elif time.time() - letter_start_time >= HOLD_TIME:
-                buffer_text += prediction
-                last_letter = None
-                letter_start_time = None
+            if prediction == "APUNTAR_IZQUIERDA":
+                if last_letter != prediction:
+                    last_letter = prediction
+                    letter_start_time = time.time()
+                elif time.time() - letter_start_time >= HOLD_TIME:
+                    handle_backspace()
+                    last_letter = None
+                    letter_start_time = None
+            else:
+                if prediction != last_letter:
+                    last_letter = prediction
+                    letter_start_time = time.time()
+                elif time.time() - letter_start_time >= HOLD_TIME:
+                    buffer_text += prediction
+                    last_letter = None
+                    letter_start_time = None
 
-        # Confirmar búsqueda
         if search_confirmed(prediction) and buffer_text:
             sp = get_spotify_client()
             results = sp.search(q=buffer_text, type="track", limit=10)
@@ -282,7 +310,7 @@ while True:
                     best_match = t
 
             if best_match and max_matches > 0:
-                print(f"Reproduciendo: {best_match['name']} - {best_match['artists'][0]['name']}")
+                print(f"🎵 Reproduciendo: {best_match['name']} - {best_match['artists'][0]['name']}")
                 sp.start_playback(uris=[best_match["uri"]])
             else:
                 print("No se encontró ninguna canción relevante.")
@@ -292,8 +320,25 @@ while True:
             last_letter = None
             letter_start_time = None
 
-
     elif state == STATE_SEARCH_PLAYLIST_NAME:
+        if prediction not in ["-", "SEARCH"]:
+            if prediction == "APUNTAR_IZQUIERDA":
+                if last_letter != prediction:
+                    last_letter = prediction
+                    letter_start_time = time.time()
+                elif time.time() - letter_start_time >= HOLD_TIME:
+                    handle_backspace()
+                    last_letter = None
+                    letter_start_time = None
+            else:
+                if prediction != last_letter:
+                    last_letter = prediction
+                    letter_start_time = time.time()
+                elif time.time() - letter_start_time >= HOLD_TIME:
+                    buffer_text += prediction
+                    last_letter = None
+                    letter_start_time = None
+
         if search_confirmed(prediction):
             playlist = find_user_playlist(buffer_text)
             if playlist:
@@ -306,16 +351,26 @@ while True:
             last_letter = None
             letter_start_time = None
             time.sleep(1)
-        elif prediction not in ["-", "SEARCH"]:
-            if prediction != last_letter:
-                last_letter = prediction
-                letter_start_time = time.time()
-            elif time.time() - letter_start_time >= HOLD_TIME:
-                buffer_text += prediction
-                last_letter = None
-                letter_start_time = None
 
     elif state == STATE_SEARCH_TRACK_IN_PLAYLIST:
+        if prediction not in ["-", "SEARCH"]:
+            if prediction == "APUNTAR_IZQUIERDA":
+                if last_letter != prediction:
+                    last_letter = prediction
+                    letter_start_time = time.time()
+                elif time.time() - letter_start_time >= HOLD_TIME:
+                    handle_backspace()
+                    last_letter = None
+                    letter_start_time = None
+            else:
+                if prediction != last_letter:
+                    last_letter = prediction
+                    letter_start_time = time.time()
+                elif time.time() - letter_start_time >= HOLD_TIME:
+                    buffer_text += prediction
+                    last_letter = None
+                    letter_start_time = None
+
         if search_confirmed(prediction):
             if selected_playlist:
                 track = find_track_in_playlist(selected_playlist["uri"], buffer_text)
@@ -329,14 +384,6 @@ while True:
             letter_start_time = None
             state = STATE_MAIN
             time.sleep(1)
-        elif prediction not in ["-", "SEARCH"]:
-            if prediction != last_letter:
-                last_letter = prediction
-                letter_start_time = time.time()
-            elif time.time() - letter_start_time >= HOLD_TIME:
-                buffer_text += prediction
-                last_letter = None
-                letter_start_time = None
 
     # ===============================
     # UI

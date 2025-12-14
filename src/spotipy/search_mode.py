@@ -254,12 +254,8 @@ while True:
                 time.sleep(1)
 
     elif state == STATE_SEARCH_GLOBAL:
-        if search_confirmed(prediction):
-            track = search_global_track(buffer_text)
-            if track:
-                get_spotify_client().start_playback(uris=[track["uri"]])
-            state = STATE_MAIN
-        elif prediction not in ["-", "SEARCH"]:
+        # Añadir letras al buffer
+        if prediction not in ["-", "SEARCH"]:
             if prediction != last_letter:
                 last_letter = prediction
                 letter_start_time = time.time()
@@ -267,6 +263,35 @@ while True:
                 buffer_text += prediction
                 last_letter = None
                 letter_start_time = None
+
+        # Confirmar búsqueda
+        if search_confirmed(prediction) and buffer_text:
+            sp = get_spotify_client()
+            results = sp.search(q=buffer_text, type="track", limit=10)
+            items = results["tracks"]["items"]
+
+            best_match = None
+            max_matches = 0
+            search_words = buffer_text.lower().split()
+
+            for t in items:
+                track_name_words = t["name"].lower().split()
+                matches = sum(1 for w in search_words if w in track_name_words)
+                if matches > max_matches:
+                    max_matches = matches
+                    best_match = t
+
+            if best_match and max_matches > 0:
+                print(f"Reproduciendo: {best_match['name']} - {best_match['artists'][0]['name']}")
+                sp.start_playback(uris=[best_match["uri"]])
+            else:
+                print("No se encontró ninguna canción relevante.")
+
+            state = STATE_MAIN
+            buffer_text = ""
+            last_letter = None
+            letter_start_time = None
+
 
     elif state == STATE_SEARCH_PLAYLIST_NAME:
         if search_confirmed(prediction):

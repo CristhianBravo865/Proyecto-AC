@@ -8,6 +8,7 @@ import threading
 import queue
 
 from spotify_auth import get_spotify_client
+from difflib import SequenceMatcher
 
 # ===============================
 # CONFIG GESTOS ESTÁTICOS
@@ -17,6 +18,7 @@ HOLD_TIME = 1.5  # tiempo que debe mantenerse el gesto
 last_gesture_time = 0
 last_gesture = None
 gesture_start_time = None
+VALID_LETTERS = set(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
 
 # ===============================
 # ESTADOS
@@ -62,6 +64,9 @@ detector = mp.tasks.vision.HandLandmarker.create_from_options(options)
 # ===============================
 # UTILS
 # ===============================
+def similarity(a, b):
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
 def mp_image_from_frame(frame):
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
@@ -93,6 +98,30 @@ def detect_static_gesture(prediction):
 # ===============================
 # SPOTIFY FUNCIONES
 # ===============================
+def search_best_track(sp, query, limit=20):
+    results = sp.search(q=query, type="track", limit=limit)
+
+    if not results["tracks"]["items"]:
+        return None
+
+    best_track = None
+    best_score = 0
+
+    for track in results["tracks"]["items"]:
+        name = track["name"]
+        artists = " ".join([a["name"] for a in track["artists"]])
+
+        score_name = similarity(query, name)
+        score_artist = similarity(query, artists)
+
+        score = max(score_name, score_artist)
+
+        if score > best_score:
+            best_score = score
+            best_track = track
+
+    return best_track
+
 def get_current_volume(sp):
     playback = sp.current_playback()
     if playback and "device" in playback and "volume_percent" in playback["device"]:
@@ -318,24 +347,25 @@ while True:
                 time.sleep(0.5)
 
     elif state == STATE_SEARCH_GLOBAL:
-        if prediction not in ["-", "SEARCH"]:
-            if prediction == "APUNTAR_IZQUIERDA":
-                if last_letter != prediction:
-                    last_letter = prediction
-                    letter_start_time = time.time()
-                elif time.time() - letter_start_time >= HOLD_TIME:
-                    handle_backspace()
-                    last_letter = None
-                    letter_start_time = None
-            else:
-                if prediction != last_letter:
-                    last_letter = prediction
-                    letter_start_time = time.time()
-                elif time.time() - letter_start_time >= HOLD_TIME:
-                    buffer_text += prediction
-                    speak(f"Letra guardada: {prediction}")
-                    last_letter = None
-                    letter_start_time = None
+
+        if prediction == "APUNTAR_IZQUIERDA":
+            if last_letter != prediction:
+                last_letter = prediction
+                letter_start_time = time.time()
+            elif time.time() - letter_start_time >= HOLD_TIME:
+                handle_backspace()
+                last_letter = None
+                letter_start_time = None
+
+        elif prediction in VALID_LETTERS:
+            if prediction != last_letter:
+                last_letter = prediction
+                letter_start_time = time.time()
+            elif time.time() - letter_start_time >= HOLD_TIME:
+                buffer_text += prediction
+                speak(f"Letra guardada: {prediction}")
+                last_letter = None
+                letter_start_time = None
 
         if search_confirmed(prediction) and buffer_text:
             sp = get_spotify_client()
@@ -343,18 +373,24 @@ while True:
             items = results["tracks"]["items"]
 
             best_match = None
-            max_matches = 0
-            search_words = buffer_text.lower().split()
+            best_score = 0
+            query = buffer_text.lower()
 
             for t in items:
-                track_name_words = t["name"].lower().split()
-                matches = sum(1 for w in search_words if w in track_name_words)
-                if matches > max_matches:
-                    max_matches = matches
+                track_name = t["name"].lower()
+                artist_name = " ".join(a["name"].lower() for a in t["artists"])
+
+                score_name = similarity(query, track_name)
+                score_artist = similarity(query, artist_name)
+
+                score = max(score_name, score_artist)
+
+                if score > best_score:
+                    best_score = score
                     best_match = t
 
-            if best_match and max_matches > 0:
-                print(f"🎵 Reproduciendo: {best_match['name']} - {best_match['artists'][0]['name']}")
+            if best_match and best_score > 0.1:
+                print(f"Reproduciendo: {best_match['name']} - {best_match['artists'][0]['name']}")
                 sp.start_playback(uris=[best_match["uri"]])
                 speak(f"Reproduciendo: {best_match['name']} de {best_match['artists'][0]['name']}")
             else:

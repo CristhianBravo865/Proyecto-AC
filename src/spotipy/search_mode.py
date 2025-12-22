@@ -98,6 +98,65 @@ def detect_static_gesture(prediction):
 # ===============================
 # SPOTIFY FUNCIONES
 # ===============================
+def find_best_track_in_playlist(playlist_uri, query):
+    sp = get_spotify_client()
+    playlist_id = playlist_uri.split(":")[-1]
+    query = query.lower()
+
+    offset = 0
+    limit = 100
+
+    best_track = None
+    best_score = 0
+
+    while True:
+        results = sp.playlist_items(
+            playlist_id,
+            offset=offset,
+            limit=limit,
+            additional_types=["track"]
+        )
+
+        for item in results["items"]:
+            track = item.get("track")
+            if not track or not track.get("name"):
+                continue
+
+            name = track["name"].lower()
+
+            artists_list = track.get("artists", [])
+            artists = " ".join(
+                a["name"].lower()
+                for a in artists_list
+                if a.get("name")
+            )
+
+            title_words = name.split()
+            first_word = title_words[0] if title_words else ""
+
+            score_name = similarity(query, name)
+            score_artist = similarity(query, artists)
+            score_first_word = similarity(query, first_word)
+
+            bonus = 0
+            if first_word.startswith(query):
+                bonus += 0.15
+            elif query in first_word:
+                bonus += 0.08
+
+            score = max(score_name, score_artist, score_first_word) + bonus
+
+            if score > best_score:
+                best_score = score
+                best_track = track
+
+        if results["next"] is None:
+            break
+
+        offset += limit
+
+    return best_track, best_score
+
 def search_best_track(sp, query, limit=20):
     results = sp.search(q=query, type="track", limit=limit)
 
@@ -459,12 +518,17 @@ while True:
 
         if search_confirmed(prediction):
             if selected_playlist:
-                track = find_track_in_playlist(selected_playlist["uri"], buffer_text)
-                if track:
+                track, score = find_best_track_in_playlist(
+                    selected_playlist["uri"],
+                    buffer_text
+                )
+
+                if track and score > 0.25:
                     play_playlist_from_track(selected_playlist["uri"], track["uri"])
                     speak(f"Reproduciendo {track['name']} de {track['artists'][0]['name']}")
                 else:
-                    speak("No se encontró la canción en la playlist.")
+                    speak("No se encontró una canción relevante en la playlist.")
+
             selected_playlist = None
             buffer_text = ""
             last_letter = None

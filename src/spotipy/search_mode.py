@@ -157,30 +157,6 @@ def find_best_track_in_playlist(playlist_uri, query):
 
     return best_track, best_score
 
-def search_best_track(sp, query, limit=20):
-    results = sp.search(q=query, type="track", limit=limit)
-
-    if not results["tracks"]["items"]:
-        return None
-
-    best_track = None
-    best_score = 0
-
-    for track in results["tracks"]["items"]:
-        name = track["name"]
-        artists = " ".join([a["name"] for a in track["artists"]])
-
-        score_name = similarity(query, name)
-        score_artist = similarity(query, artists)
-
-        score = max(score_name, score_artist)
-
-        if score > best_score:
-            best_score = score
-            best_track = track
-
-    return best_track
-
 def get_current_volume(sp):
     playback = sp.current_playback()
     if playback and "device" in playback and "volume_percent" in playback["device"]:
@@ -231,12 +207,6 @@ def search_confirmed(prediction):
 # ===============================
 # SPOTIFY BÚSQUEDA
 # ===============================
-def search_global_track(query):
-    sp = get_spotify_client()
-    results = sp.search(q=query, type="track", limit=1)
-    items = results["tracks"]["items"]
-    return items[0] if items else None
-
 def find_user_playlist(name):
     sp = get_spotify_client()
     playlists = sp.current_user_playlists(limit=50)["items"]
@@ -244,23 +214,6 @@ def find_user_playlist(name):
     for p in playlists:
         if name in p["name"].lower():
             return p
-    return None
-
-def find_track_in_playlist(playlist_uri, track_name):
-    sp = get_spotify_client()
-    playlist_id = playlist_uri.split(":")[-1]
-    track_name = track_name.lower()
-    offset = 0
-    limit = 100
-    while True:
-        results = sp.playlist_items(playlist_id, offset=offset, limit=limit, additional_types=["track"])
-        for item in results["items"]:
-            track = item.get("track")
-            if track and track_name in track["name"].lower():
-                return track
-        if results["next"] is None:
-            break
-        offset += limit
     return None
 
 def play_playlist_from_track(playlist_uri, track_uri):
@@ -292,7 +245,7 @@ def voice_worker():
         try:
             # Inicializamos el motor DENTRO del bucle para cada frase
             engine = pyttsx3.init()
-            engine.setProperty('rate', 125) # Un poco más rápido para que no se acumulen
+            engine.setProperty('rate', 125) # Velocidad
             engine.setProperty('volume', 1)
             
             engine.say(text)

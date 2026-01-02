@@ -140,7 +140,7 @@ def main():
                 else:
                     row = [0.0 for _ in range(21*3)] + [letter]
                 append_row(csv_path, row)
-                print(f"✔ {fname.name}  (landmarks: {len(res.hand_landmarks) if 'res' in locals() else 0})")
+                print(f"{fname.name}  (landmarks: {len(res.hand_landmarks) if 'res' in locals() else 0})")
                 # pequeña pausa para variación natural
                 time.sleep(0.04)
 
